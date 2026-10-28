@@ -1,0 +1,13 @@
+**
+!Dockerfile
+!package.json
+!package-lock.json
+!src/
+!src/**
+!test/
+!test/**
+!manifest.json
+!.env.cloud.example
+!terraform/
+!terraform/main.tf
+!terraform/terraform.tfvars.example

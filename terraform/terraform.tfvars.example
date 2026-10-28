@@ -1,0 +1,13 @@
+project_id       = "your-project-id"
+deploy_app       = false
+region           = "us-central1"
+image            = "us-central1-docker.pkg.dev/your-project-id/slack-broadcast/communications@sha256:REPLACE_WITH_IMAGE_DIGEST"
+slack_team_id    = "T0123456789"
+allowed_user_ids = ["U0123456789"]
+admin_user_ids   = ["U0123456789"]
+app_name         = "Slack Broadcast"
+bot_token_secret = "slack-broadcast-bot-token"
+signing_secret   = "slack-broadcast-signing-secret"
+
+# Set false if this project already has its default Firestore Native database.
+create_firestore_database = true

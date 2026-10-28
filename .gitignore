@@ -1,0 +1,16 @@
+node_modules/
+.env
+.env.*
+!.env.example
+!.env.cloud.example
+data/
+*.log
+.DS_Store
+manifest.generated.json
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/*.tfplan
+terraform/*-plan.txt
+terraform/.terraform.tfstate.lock.info
+terraform/*.tfvars
+!terraform/*.tfvars.example

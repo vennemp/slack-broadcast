@@ -1,0 +1,49 @@
+{
+  "display_information": {
+    "name": "Slack Broadcast",
+    "description": "Slack message broadcast app. Send announcements to multiple channels from a single dialog.",
+    "long_description": "Slack Broadcast is a Slack message broadcast app. Authorized senders can post messages to channels where this app has been invited. To use a private channel, a member of that channel must add the app to it first, and the sender must already be a member of that channel. For external channels, we recommend asking participants for permission before adding the app. A copyable permission request is available on the Home tab. The app reads basic channel information to verify access; it does not read channel message history. It stores approved sender IDs, access change records, saved channel groups, and delivery records, and temporarily stores message text while drafts and deliveries are processed. Open the Home tab to compose, manage shared channel groups, or view your recent delivery results. App administrators can add or remove approved senders from Home. The /broadcast commands are also available.",
+    "background_color": "#25314C"
+  },
+  "features": {
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": false
+    },
+    "bot_user": {
+      "display_name": "Slack Broadcast",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/broadcast",
+        "description": "Send one message to multiple channels",
+        "usage_hint": "[message], status, or groups",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "channels:read",
+        "groups:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "bot_events": [
+        "app_home_opened"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true
+    },
+    "socket_mode_enabled": true,
+    "org_deploy_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
