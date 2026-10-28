@@ -3,7 +3,7 @@ import { deliver } from './delivery.js';
 import { createViews, MAX_CHANNELS, MAX_MESSAGE_LENGTH } from './views.js';
 import { getAppName } from './branding.js';
 import { LocalGroups } from './channel-groups.js';
-import { ChannelAccess } from './channel-access.js';
+import { ChannelAccess, blockedText } from './channel-access.js';
 import { createGroupHandler, GROUP_ACTIONS } from './group-handlers.js';
 import { homeView } from './home-view.js';
 import { handleSenderManagement, SENDER_ACTIONS } from './sender-management.js';
@@ -57,7 +57,7 @@ export function registerHandlers(app, { journal, teamId, allowedUsers = new Set(
       draft.savedGroupIds = selectedGroupIds(payload.view.state?.values);
       return draft.id;
     },
-    compose: async ({ userId, channels, draftId }) => {
+    compose: async ({ userId, groupId, draftId }) => {
       prune();
       let draft = drafts.get(draftId);
       if (draft?.userId !== userId || draft?.teamId !== teamId || draft?.state !== 'compose') draft = undefined;
@@ -65,7 +65,7 @@ export function registerHandlers(app, { journal, teamId, allowedUsers = new Set(
         draft = { id: randomUUID(), userId, teamId, channels: [], text: '', createdAt: Date.now(), state: 'compose' };
         drafts.set(draft.id, draft);
       }
-      if (channels) Object.assign(draft, { channels: [...channels], additionalChannels: [...channels], savedGroupIds: [] });
+      if (groupId) Object.assign(draft, { channels: [], additionalChannels: [], savedGroupIds: [groupId] });
       return composeView(draft);
     },
   });
@@ -171,19 +171,22 @@ export function registerHandlers(app, { journal, teamId, allowedUsers = new Set(
       if (error instanceof GroupError) return ack({ response_action: 'errors', errors: { [error.field]: error.message } });
       throw error;
     }
-    const { channels } = recipients;
+    const { channels: selected } = recipients;
     const text = view.state.values.message?.text?.value || '';
     const errors = {};
-    if (!channels.length || channels.length > MAX_CHANNELS || channels.some((id) => !/^[CG][A-Z0-9]+$/.test(id))) {
+    if (!selected.length || selected.length > MAX_CHANNELS || selected.some((id) => !/^[CG][A-Z0-9]+$/.test(id))) {
       errors.channels = `Choose between 1 and ${MAX_CHANNELS} channels.`;
     }
     if (!text.trim() || text.length > MAX_MESSAGE_LENGTH) {
       errors.message = `Enter a message of 1 to ${MAX_MESSAGE_LENGTH} characters.`;
     }
     if (Object.keys(errors).length) return ack({ response_action: 'errors', errors });
-    try { await access.assert(body.user.id, channels); }
-    catch { return ack({ response_action: 'errors', errors: { channels: 'Could not verify every destination. Join private channels and invite the app, then try again.' } }); }
-    Object.assign(draft, { ...recipients, text, state: 'review' });
+    let checked;
+    try { checked = await access.check(body.user.id, selected); }
+    catch { return ack({ response_action: 'errors', errors: { channels: 'Could not check channel access. Try again.' } }); }
+    const { channels, skipped } = checked;
+    if (!channels.length) return ack({ response_action: 'errors', errors: { channels: `None of the selected channels can receive this broadcast: ${blockedText(skipped)}. Join each private channel and invite the app, then try again.` } });
+    Object.assign(draft, { ...recipients, channels, skipped, text, state: 'review' });
     await ack({ response_action: 'update', view: reviewView(draft) });
   });
 
@@ -210,8 +213,11 @@ export function registerHandlers(app, { journal, teamId, allowedUsers = new Set(
     if (draft.state !== 'review') return expired(ack);
     // Set synchronously before the first await to ignore repeated Send events.
     draft.state = 'sending';
-    try { await access.assert(body.user.id, draft.channels); }
-    catch {
+    try {
+      // Channels lost since review are skipped and reported with the others.
+      const checked = await access.check(body.user.id, draft.channels);
+      Object.assign(draft, { channels: checked.channels, skipped: [...(draft.skipped || []), ...checked.skipped] });
+    } catch {
       draft.state = 'review';
       return ack({ response_action: 'update', view: noticeView('Channel access could not be verified. Run /broadcast to check your destinations again.') });
     }

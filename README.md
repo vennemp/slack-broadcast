@@ -92,7 +92,7 @@ The **Saved channel groups** picker in the composer lists existing groups and th
 
 The Slack app icon is available at [assets/slack-broadcast-icon.png](assets/slack-broadcast-icon.png). Upload it under **Basic Information → Display Information → App icon** in the Slack app settings.
 
-Private channels are shown only to senders who belong to them. When editing a group, inaccessible existing channels are preserved rather than silently removed. Using a whole group is blocked if any member channel is unavailable to the sender or app. Group edits use versions so simultaneous changes do not overwrite one another. Removing a channel from a saved group changes that group only; it does not change Slack channel membership.
+Private channels are shown only to senders who belong to them. When editing a group, inaccessible existing channels are preserved rather than silently removed. When a broadcast includes a channel the sender or app cannot access, Review lists it as skipped with the reason, the remaining channels still receive the message, and the results record each skipped channel as a failure. Review is refused only when no selected channel is accessible. Group edits use versions so simultaneous changes do not overwrite one another. Removing a channel from a saved group changes that group only; it does not change Slack channel membership.
 
 ## Selected operating policy
 

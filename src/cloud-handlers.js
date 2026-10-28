@@ -1,6 +1,6 @@
 import { createViews, MAX_CHANNELS, MAX_MESSAGE_LENGTH } from './views.js';
 import { createGroupHandler } from './group-handlers.js';
-import { ChannelAccess } from './channel-access.js';
+import { ChannelAccess, blockedText } from './channel-access.js';
 import { homeView } from './home-view.js';
 import { handleSenderManagement, SENDER_ACTIONS } from './sender-management.js';
 import { composeRecipients, selectedChannels, selectedGroupIds } from './compose-groups.js';
@@ -37,11 +37,11 @@ export function createCloudHandler({ store, queue, client, teamId, allowedUsers 
       if (!draft) throw new Error('Draft unavailable');
       return draft.id;
     },
-    compose: async ({ userId, channels, draftId }) => {
+    compose: async ({ userId, groupId, draftId }) => {
       let draft = draftId ? await store.draft(draftId, teamId, userId) : undefined;
       if (draft?.state !== 'compose') draft = undefined;
       if (!draft) draft = await store.createDraft({ teamId, userId });
-      if (channels) draft = await store.changeDraft(draft.id, teamId, userId, 'compose', { channels, additionalChannels: channels, savedGroupIds: [] });
+      if (groupId) draft = await store.changeDraft(draft.id, teamId, userId, 'compose', { channels: [], additionalChannels: [], savedGroupIds: [groupId] });
       return composeView(draft);
     },
   }) : undefined;
@@ -134,15 +134,18 @@ export function createCloudHandler({ store, queue, client, teamId, allowedUsers 
         if (error instanceof GroupError) return { response_action: 'errors', errors: { [error.field]: error.message } };
         throw error;
       }
-      const { channels } = recipients;
+      const { channels: selected } = recipients;
       const text = view.state?.values?.message?.text?.value || '';
       const errors = {};
-      if (!channels.length || channels.length > MAX_CHANNELS || channels.some((id) => !/^[CG][A-Z0-9]+$/.test(id))) errors.channels = `Choose between 1 and ${MAX_CHANNELS} channels.`;
+      if (!selected.length || selected.length > MAX_CHANNELS || selected.some((id) => !/^[CG][A-Z0-9]+$/.test(id))) errors.channels = `Choose between 1 and ${MAX_CHANNELS} channels.`;
       if (!text.trim() || text.length > MAX_MESSAGE_LENGTH) errors.message = `Enter a message of 1 to ${MAX_MESSAGE_LENGTH} characters.`;
       if (Object.keys(errors).length) return { response_action: 'errors', errors };
-      try { await access.assert(userId, channels); }
-      catch { return { response_action: 'errors', errors: { channels: 'Could not verify every destination. Join private channels and invite the app, then try again.' } }; }
-      const draft = await store.changeDraft(view.private_metadata, teamId, userId, 'compose', { state: 'review', ...recipients, text });
+      let checked;
+      try { checked = await access.check(userId, selected); }
+      catch { return { response_action: 'errors', errors: { channels: 'Could not check channel access. Try again.' } }; }
+      const { channels, skipped } = checked;
+      if (!channels.length) return { response_action: 'errors', errors: { channels: `None of the selected channels can receive this broadcast: ${blockedText(skipped)}. Join each private channel and invite the app, then try again.` } };
+      const draft = await store.changeDraft(view.private_metadata, teamId, userId, 'compose', { state: 'review', ...recipients, channels, skipped, text });
       if (draft) return updated(reviewView(draft));
       // A retry may arrive after the first request saved the review state.
       const existing = await store.draft(view.private_metadata, teamId, userId);
@@ -151,15 +154,14 @@ export function createCloudHandler({ store, queue, client, teamId, allowedUsers 
     if (view.callback_id === 'broadcast_send') {
       const draft = await store.draft(view.private_metadata, teamId, userId);
       if (!draft) return unavailable();
-      try { await access.assert(userId, draft.channels); }
-      catch { return updated(noticeView('Channel access could not be verified. Run /broadcast to check your destinations again.')); }
+      // The delivery worker checks access again and reports any channel lost since review.
       const job = await store.prepare(view.private_metadata, teamId, userId, view.id);
       if (!job) return unavailable();
       if (!job.finishedAt) {
         try {
           await queue.enqueue(job.id);
         } catch {
-          const retryView = reviewView({ id: job.id, channels: job.results.map((result) => result.channel), text: job.text });
+          const retryView = reviewView({ id: job.id, channels: job.results.filter((result) => result.status === 'queued').map((result) => result.channel), text: job.text });
           retryView.blocks.unshift({ type: 'section', text: { type: 'plain_text', text: 'Could not confirm queueing. Click Send again to check or retry this same broadcast safely.' } });
           return updated(retryView);
         }

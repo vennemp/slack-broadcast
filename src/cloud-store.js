@@ -54,7 +54,10 @@ export class CloudStore {
       if (draft.state !== 'review') return undefined;
       const job = {
         id, teamId, userId, viewId, text: draft.text, createdAt: new Date().toISOString(),
-        results: draft.channels.map((channel) => ({ channel, status: 'queued' })),
+        results: [
+          ...draft.channels.map((channel) => ({ channel, status: 'queued' })),
+          ...(draft.skipped || []).map(({ channel, error }) => ({ channel, status: 'failed', error })),
+        ],
         phase: 'queued', leaseUntil: 0, finishedAt: null,
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000),
       };

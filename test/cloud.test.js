@@ -10,7 +10,7 @@ import { verifySlackRequest, verifyTaskRequest } from '../src/cloud-security.js'
 import { FirestoreGroups } from '../src/channel-groups.js';
 import { FirestoreSenders } from '../src/approved-senders.js';
 
-const access = { available: async () => new Set(['CONE', 'CTWO', 'CTHREE']), assert: async () => {} };
+const access = { available: async () => new Set(['CONE', 'CTWO', 'CTHREE']), check: async (_user, channels) => ({ channels, skipped: [] }) };
 
 // A serializable in-memory transaction adapter. Separate store instances share
 // this database so tests exercise ownership and retries without Google access.
@@ -229,7 +229,8 @@ test('group selection preserves an unsent draft and never sends a message', asyn
   await handler({ ...owner, type: 'block_actions', view: { id: 'VONE', private_metadata: current.private_metadata }, actions: [{ action_id: 'group_choice', selected_option: { value: `${group.id}:use` } }] });
   assert.equal(current.private_metadata, id);
   assert.equal(current.blocks.find((block) => block.block_id === 'message').element.initial_value, 'Edited before picking a group');
-  assert.deepEqual(current.blocks.find((block) => block.block_id === 'channels').element.initial_conversations, ['CONE']);
+  assert.deepEqual(current.blocks.find((block) => block.block_id === 'saved_groups').element.initial_options.map((option) => option.value), [group.id]);
+  assert.equal(current.blocks.find((block) => block.block_id === 'channels').element.initial_conversations, undefined);
 });
 
 test('private access and sender authorization are checked again by the delivery worker', async () => {
@@ -282,7 +283,7 @@ test('composer combines saved groups and extra channels once, preserves edits, a
   const queued = [];
   const handler = createCloudHandler({ store, groups, teamId: 'TONE', appName: 'Slack Broadcast', allowedUsers: new Set(['UONE']),
     client: { views: { open: async (value) => { opened = value.view; }, update: async (value) => { edited = value.view; } } },
-    queue: { enqueue: async (id) => queued.push(id) }, access: { assert: async (_user, channels) => { checked = channels; } },
+    queue: { enqueue: async (id) => queued.push(id) }, access: { check: async (_user, channels) => { checked = channels; return { channels, skipped: [] }; } },
   });
   await handler({ type: 'block_actions', team: { id: 'TONE' }, user: { id: 'UONE' }, trigger_id: 'trigger', actions: [{ action_id: 'home_compose' }] });
   assert.deepEqual(opened.blocks.find((block) => block.block_id === 'saved_groups').element.options.map((option) => option.text.text), ['Engineering', 'Operations']);
@@ -311,11 +312,11 @@ test('composer rejects missing or foreign groups, inaccessible recipients, and m
   const foreign = await groups.save('TOTHER', { userId: 'UONE', name: 'Other workspace', channels: ['CSECRET'] });
   const group = await groups.save('TONE', { userId: 'UONE', name: 'Private destinations', channels: ['CSECRET'] });
   const many = await groups.save('TONE', { userId: 'UONE', name: 'Full group', channels: Array.from({ length: 25 }, (_, i) => `C${i}`) });
-  const handler = createCloudHandler({ store, groups, client: {}, queue: {}, teamId: 'TONE', allowedUsers: new Set(['UONE']), appName: 'Communications', access: { assert: async () => { throw new Error('No access'); } } });
+  const handler = createCloudHandler({ store, groups, client: {}, queue: {}, teamId: 'TONE', allowedUsers: new Set(['UONE']), appName: 'Communications', access: { check: async () => ({ channels: [], skipped: [{ channel: 'CSECRET', label: '#secret', reason: 'you are not a member of this private channel', error: 'sender_not_member' }] }) } });
   const draft = await store.createDraft({ teamId: 'TONE', userId: 'UONE' });
   const payload = (id, channels = []) => ({ type: 'view_submission', team: { id: 'TONE' }, user: { id: 'UONE' }, view: { callback_id: 'broadcast_compose', private_metadata: draft.id, state: { values: { saved_groups: { selected: { selected_options: [{ value: id }] } }, channels: { selected: { selected_conversations: channels } }, message: { text: { value: 'Message' } } } } } });
   for (const id of [foreign.id, randomUUID()]) assert.ok((await handler(payload(id))).errors.saved_groups);
-  assert.match((await handler(payload(group.id))).errors.channels, /verify every destination/);
+  assert.match((await handler(payload(group.id))).errors.channels, /None of the selected channels.*#secret \(you are not a member of this private channel\)/);
   assert.match((await handler(payload(many.id, ['CEXTRA']))).errors.channels, /25/);
   assert.equal((await store.draft(draft.id, 'TONE', 'UONE')).state, 'compose');
 });
@@ -356,4 +357,28 @@ test('the HTTP endpoint accepts signed JSON URL verification without reading use
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { challenge: 'slack-challenge' });
+});
+
+test('blocked channels are skipped at review, recorded as failures, and the rest still send', async () => {
+  const store = new CloudStore(database());
+  const queued = [];
+  const posted = [];
+  const skipped = [{ channel: 'CLEAD', label: '#leadership', reason: 'you are not a member of this private channel', error: 'sender_not_member' }];
+  const handler = createCloudHandler({ store, teamId: 'TONE', appName: 'Slack Broadcast', allowedUsers: new Set(['UONE']), client: {},
+    queue: { enqueue: async (id) => queued.push(id) },
+    access: { check: async (_user, channels) => ({ channels: channels.filter((id) => id !== 'CLEAD'), skipped }) },
+  });
+  const draft = await store.createDraft({ teamId: 'TONE', userId: 'UONE' });
+  const payload = { type: 'view_submission', team: { id: 'TONE' }, user: { id: 'UONE' }, view: { id: 'VONE', callback_id: 'broadcast_compose', private_metadata: draft.id,
+    state: { values: { channels: { selected: { selected_conversations: ['CONE', 'CLEAD'] } }, message: { text: { value: 'Hello' } } } } } };
+  const reviewed = (await handler(payload)).view;
+  assert.equal(reviewed.submit.text, 'Send to 1');
+  assert.match(JSON.stringify(reviewed), /Skipped.*#leadership — you are not a member of this private channel/);
+  const sent = (await handler({ ...payload, view: { ...payload.view, callback_id: 'broadcast_send' } })).view;
+  assert.deepEqual(queued, [draft.id]);
+  assert.match(JSON.stringify(sent), /Skipped: you are not a member of this private channel/);
+  const client = { chat: { postMessage: async ({ channel }) => { posted.push(channel); return { ok: true, ts: '1.0' }; } } };
+  const result = await processCloudJob({ id: draft.id, store, client, access: { available: async () => new Set(['CONE']) } });
+  assert.deepEqual(posted, ['CONE']);
+  assert.deepEqual(result.job.results.map(({ channel, status, error }) => [channel, status, error]), [['CONE', 'sent', undefined], ['CLEAD', 'failed', 'sender_not_member']]);
 });

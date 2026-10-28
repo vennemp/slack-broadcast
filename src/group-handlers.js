@@ -54,8 +54,9 @@ export function createGroupHandler({ groups, access, client, teamId, appName, st
         const available = await access.available(userId);
         if (operation === 'edit') return update(groupEditView(group, available, appName, draftId));
         if (operation === 'use') {
-          if (group.channels.some((channel) => !available.has(channel))) return update(groupNoticeView('This group contains a channel you or the app cannot access. Join its private channels and invite the app before using the whole group. No message has been sent.', appName, draftId));
-          return update(await compose({ userId, channels: group.channels, draftId }));
+          if (!group.channels.some((channel) => available.has(channel))) return update(groupNoticeView('You or the app cannot access any channel in this group. Join its private channels and invite the app before using it. No message has been sent.', appName, draftId));
+          // Select the group itself; Review lists any of its channels that will be skipped.
+          return update(await compose({ userId, groupId: group.id, draftId }));
         }
       }
       return {};

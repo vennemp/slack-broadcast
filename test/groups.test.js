@@ -41,13 +41,22 @@ test('channel access requires bot membership and the sender membership for priva
     if (args.user) return { ok: true, channels: [{ id: 'CPRIVATEA', is_private: true }] };
     return { ok: true, channels: [
       { id: 'CPUBLIC', is_private: false }, { id: 'CPRIVATEA', is_private: true },
-      { id: 'CPRIVATEB', is_private: true }, { id: 'CUNKNOWN' },
+      { id: 'CPRIVATEB', name: 'leadership', is_private: true }, { id: 'CUNKNOWN' },
       { id: 'CARCHIVED', is_private: false, is_archived: true },
     ] };
+  } }, conversations: { info: async ({ channel }) => {
+    if (channel === 'CNEWS') return { ok: true, channel: { id: 'CNEWS', name: 'news' } };
+    throw Object.assign(new Error('channel_not_found'), { data: { error: 'channel_not_found' } });
   } } };
   const access = new ChannelAccess(client);
   assert.deepEqual([...(await access.available('UONE'))], ['CPUBLIC', 'CPRIVATEA']);
-  await assert.rejects(access.assert('UONE', ['CPRIVATEB']), /unavailable/);
+  const checked = await access.check('UONE', ['CPUBLIC', 'CPRIVATEB', 'CNEWS', 'CHIDDEN']);
+  assert.deepEqual(checked.channels, ['CPUBLIC']);
+  assert.deepEqual(checked.skipped, [
+    { channel: 'CPRIVATEB', label: '#leadership', reason: 'you are not a member of this private channel', error: 'sender_not_member' },
+    { channel: 'CNEWS', label: '#news', reason: 'the app is not in this channel', error: 'app_not_in_channel' },
+    { channel: 'CHIDDEN', label: 'private channel CHIDDEN', reason: 'the app is not in this channel', error: 'app_not_in_channel' },
+  ]);
   assert.ok(calls.some((call) => call.user === 'UONE' && call.types === 'private_channel'));
   assert.ok(calls.every((call) => call.exclude_archived));
 });
@@ -69,7 +78,7 @@ test('group editing hides inaccessible channels and preserves them when another 
   assert.equal(saved.updatedBy, 'UTWO');
 });
 
-test('an unavailable group cannot prefill a broadcast, and saving an inaccessible channel is denied', async (t) => {
+test('a group with no accessible channel cannot prefill a broadcast, and saving an inaccessible channel is denied', async (t) => {
   const groups = await local(t);
   const group = await groups.save('TONE', { userId: 'UONE', name: 'Restricted', channels: ['CPRIVATEB'] });
   let composed = false;
@@ -80,7 +89,7 @@ test('an unavailable group cannot prefill a broadcast, and saving an inaccessibl
   });
   await handler({ type: 'block_actions', user: { id: 'UTWO' }, view: { id: 'VONE', private_metadata: '{}' }, actions: [{ action_id: 'group_choice', selected_option: { value: `${group.id}:use` } }] });
   assert.equal(composed, false);
-  assert.match(JSON.stringify(updated), /cannot access/);
+  assert.match(JSON.stringify(updated), /cannot access any channel/);
   const rejected = await handler({ type: 'view_submission', user: { id: 'UTWO' }, view: {
     callback_id: 'group_save', private_metadata: '{}', state: { values: {
       group_name: { name: { value: 'Unauthorized channel' } }, group_channels: { channels: { selected_conversations: ['CPRIVATEB'] } },

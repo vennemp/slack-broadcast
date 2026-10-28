@@ -146,7 +146,7 @@ function harness(journal, options = {}) {
     action: (id, handler) => actions.set(id, handler),
     event: () => {},
   };
-  const controller = registerHandlers(app, { journal, teamId: 'TONE', access: { assert: async () => {} }, ...options });
+  const controller = registerHandlers(app, { journal, teamId: 'TONE', access: { check: async (_user, channels) => ({ channels, skipped: [] }) }, ...options });
   return { commands, views, actions, controller };
 }
 

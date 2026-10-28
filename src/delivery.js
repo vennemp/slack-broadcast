@@ -33,15 +33,19 @@ export async function deliver({ client, journal, draft, wait = delay }) {
   const job = {
     id: draft.id, teamId: draft.teamId, userId: draft.userId,
     createdAt: new Date().toISOString(),
-    results: [...new Set(draft.channels)].map((channel) => ({ channel, status: 'queued' })),
+    results: [
+      ...[...new Set(draft.channels)].map((channel) => ({ channel, status: 'queued' })),
+      ...(draft.skipped || []).map(({ channel, error }) => ({ channel, status: 'failed', error })),
+    ],
   };
   await journal.save(job);
+  const pending = job.results.filter((result) => result.status === 'queued');
   let cursor = 0;
   let interrupted = false;
   async function worker() {
     try {
-      while (!interrupted && cursor < job.results.length) {
-        const result = job.results[cursor++];
+      while (!interrupted && cursor < pending.length) {
+        const result = pending[cursor++];
         result.status = 'sending';
         // Never make an external send unless its intent was successfully recorded.
         await journal.save(job);
@@ -54,7 +58,7 @@ export async function deliver({ client, journal, draft, wait = delay }) {
     }
   }
   // Bound concurrency; a rejection must not leave other workers unobserved.
-  const workers = await Promise.allSettled(Array.from({ length: Math.min(3, job.results.length) }, worker));
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(3, pending.length) }, worker));
   const failure = workers.find((result) => result.status === 'rejected');
   if (failure) {
     for (const result of job.results) {

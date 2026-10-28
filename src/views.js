@@ -71,6 +71,10 @@ export function reviewView(draft, appName = DEFAULT_APP_NAME) {
     blocks: [
       { type: 'section', text: plain(`Send as: ${appName}`) },
       section(`*To:* ${draft.channels.map((id) => `<#${id}>`).join(', ')}`),
+      ...(draft.skipped?.length ? [
+        section(`:warning: *Skipped — ${draft.skipped.length} channel${draft.skipped.length === 1 ? '' : 's'} will not receive this message:*\n${draft.skipped.map((entry) => `• ${entry.label} — ${entry.reason}`).join('\n')}`),
+        { type: 'context', elements: [plain('To include them, join each private channel and invite the app, then choose Edit and Review again.')] },
+      ] : []),
       { type: 'divider' },
       // verbatim prevents Slack from automatically expanding names in the preview.
       { type: 'section', text: { type: 'mrkdwn', text: draft.text, verbatim: true } },
@@ -95,6 +99,8 @@ const failureHelp = {
   ratelimited: 'Slack rate limited this send. Try this channel again later.',
   rate_limited: 'Slack rate limited this send. Try this channel again later.',
   channel_access_denied: 'You or the app no longer have access to this channel. No message was sent here.',
+  sender_not_member: 'Skipped: you are not a member of this private channel. No message was sent here.',
+  app_not_in_channel: 'Skipped: the app is not in this channel. No message was sent here.',
   sender_not_authorized: 'The sender is no longer authorized to broadcast. No message was sent here.',
 };
 
